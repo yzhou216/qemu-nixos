@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  install:
+  job:
     runs-on: ubuntu-latest
     steps:
       - uses: wimpysworld/nothing-but-nix@main
@@ -12,48 +12,46 @@ jobs:
         with:
           extra_nix_config: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-  run:
-    - name: Create minimal NixOS configuration
-      run: |
-        cat > configuration.nix <<'EOF'
-        { pkgs, ... }:
-        {
-          virtualisation.diskSize = 130 * 1024;
-          boot.growPartition = true;
-          services.tailscale = {
-            enable = true;
-            useRoutingFeatures = "both";
-            extraUpFlags = [
-              "--exit-node-allow-lan-access=true"
-              "--operator=yiyu"
-              "--ssh"
+      - name: Create minimal NixOS configuration
+        run: |
+          cat > configuration.nix <<'EOF'
+          { pkgs, ... }:
+          {
+            virtualisation.diskSize = 130 * 1024;
+            boot.growPartition = true;
+            services.tailscale = {
+              enable = true;
+              useRoutingFeatures = "both";
+              extraUpFlags = [
+                "--exit-node-allow-lan-access=true"
+                "--operator=yiyu"
+                "--ssh"
+              ];
+            };
+            networking.hostName = "gha-qemu";
+            users.users.yiyu = {
+              isNormalUser = true;
+              extraGroups = [ "wheel" ];
+              hashedPassword = "$6$yM8t/1VCAl66Y7XD$dmvt7Xq6iGLU3uJ9lcpUvr/7PZxt7IzYsoZbm4s42pejndU4IAMW4YbP4JcQK5KxI5DzSwLjPFCYY/OETznnO1";
+            };
+            environment.systemPackages = with pkgs; [
             ];
-          };
-          networking.hostName = "gha-qemu";
-          users.users.yiyu = {
-            isNormalUser = true;
-            extraGroups = [ "wheel" ];
-            hashedPassword = "$6$yM8t/1VCAl66Y7XD$dmvt7Xq6iGLU3uJ9lcpUvr/7PZxt7IzYsoZbm4s42pejndU4IAMW4YbP4JcQK5KxI5DzSwLjPFCYY/OETznnO1";
-          };
-          environment.systemPackages = with pkgs; [
-          ];
-        }
-        EOF
-
-    - name: Build minimal QCOW2 image
-      run: |
-        nix run github:nix-community/nixos-generators -- \
-          -f qcow \
-          -c ./configuration.nix \
-          -o /nix/nixos-image
-
-    - name: Boot NixOS
-      run: |
-        nix run nixpkgs#qemu -- \
-          -enable-kvm \
-          -m 2048 \
-          -smp 2 \
-          -drive file=/nix/nixos-image,if=virtio,format=qcow2 \
-          -nic user,model=virtio,hostfwd=tcp::2222-:22 \
-          -nographic
-
+          }
+          EOF
+  
+      - name: Build minimal QCOW2 image
+        run: |
+          nix run github:nix-community/nixos-generators -- \
+            -f qcow \
+            -c ./configuration.nix \
+            -o /nix/nixos-image
+  
+      - name: Boot NixOS
+        run: |
+          nix run nixpkgs#qemu -- \
+            -enable-kvm \
+            -m 2048 \
+            -smp 2 \
+            -drive file=/nix/nixos-image,if=virtio,format=qcow2 \
+            -nic user,model=virtio,hostfwd=tcp::2222-:22 \
+            -nographic
