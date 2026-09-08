@@ -8,13 +8,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: wimpysworld/nothing-but-nix@main
+        with:
+          hatchet-protocol: 'rampage'
       - uses: cachix/install-nix-action@master
         with:
           extra_nix_config: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-      - name: Create minimal NixOS configuration
+      - name: Create NixOS configuration and flake
         run: |
-          cat > configuration.nix <<'EOF'
+          mkdir -p /tmp/nixos
+          cat > /tmp/nixos/configuration.nix <<'EOF'
           { pkgs, ... }:
           {
             virtualisation.diskSize = 130 * 1024;
@@ -34,24 +37,62 @@ jobs:
               extraGroups = [ "wheel" ];
               hashedPassword = "$6$yM8t/1VCAl66Y7XD$dmvt7Xq6iGLU3uJ9lcpUvr/7PZxt7IzYsoZbm4s42pejndU4IAMW4YbP4JcQK5KxI5DzSwLjPFCYY/OETznnO1";
             };
+            services.openssh.enable = true;
             environment.systemPackages = with pkgs; [
             ];
           }
           EOF
-  
+          cat > /tmp/nixos/flake.nix <<'EOF'
+          {
+            inputs = {
+              nixpkgs.url = "nixpkgs/nixos-unstable";
+            };
+            outputs = { self, nixpkgs, ... }:
+            let
+              system = "x86_64-linux";
+            in
+            {
+              nixosConfigurations.gha-qemu = nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  ({ modulesPath, ... }: {
+                    imports = [ "${modulesPath}/image/images.nix" ];
+                  })
+                  ./configuration.nix
+                ];
+              };
+            };
+          }
+          EOF
+
       - name: Build minimal QCOW2 image
         run: |
-          nix run github:nix-community/nixos-generators -- \
-            -f qcow \
-            -c ./configuration.nix \
-            -o /nix/nixos-image
-  
-      - name: Boot NixOS
+          nix run nixpkgs#nixos-rebuild -- build-image \
+            --flake /tmp/nixos#gha-qemu \
+            --image-variant qemu \
+            --accept-flake-config
+          image=$(find result -maxdepth 1 -name '*.qcow2')
+          test -n "$image"
+          echo "image=$PWD/result/$(basename "$image")" >> "$GITHUB_ENV"
+
+      - name: Boot NixOS and wait for SSH
         run: |
-          nix run nixpkgs#qemu -- \
-            -enable-kvm \
+          nix shell nixpkgs#qemu -c qemu-system-x86_64 \
             -m 2048 \
             -smp 2 \
-            -drive file=/nix/nixos-image,if=virtio,format=qcow2 \
+            -drive file=${{ env.image }},if=virtio,format=qcow2 \
             -nic user,model=virtio,hostfwd=tcp::2222-:22 \
-            -nographic
+            -display none -serial file:qemu.log > /dev/null 2>&1 &
+          qemu_pid=$!
+          ok=no
+          for i in $(seq 1 120); do
+            if timeout 2 bash -c '</dev/tcp/127.0.0.1/2222' 2>/dev/null; then
+              ok=yes
+              break
+            fi
+            sleep 3
+          done
+          kill "$qemu_pid" 2>/dev/null || true
+          wait "$qemu_pid" 2>/dev/null || true
+          tail -40 qemu.log
+          test "$ok" = yes
