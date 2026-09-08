@@ -73,9 +73,9 @@ jobs:
             --flake /tmp/nixos#gha-qemu \
             --image-variant qemu \
             --accept-flake-config
-          image=$(find result -maxdepth 1 -name '*.qcow2')
+          image=$(find result -L -name '*.qcow2' | head -1)
           test -n "$image"
-          echo "image=$PWD/result/$(basename "$image")" >> "$GITHUB_ENV"
+          echo "image=$image" >> "$GITHUB_ENV"
 
       - name: Boot NixOS and wait for SSH
         run: |
