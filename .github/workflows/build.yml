@@ -7,9 +7,6 @@ jobs:
   job:
     runs-on: ubuntu-latest
     steps:
-      - uses: wimpysworld/nothing-but-nix@main
-        with:
-          hatchet-protocol: 'rampage'
       - uses: cachix/install-nix-action@master
         with:
           extra_nix_config: |
@@ -22,15 +19,8 @@ jobs:
           {
             virtualisation.diskSize = 10 * 1024;
             boot.growPartition = true;
-            services.tailscale = {
-              enable = true;
-              useRoutingFeatures = "both";
-              extraUpFlags = [
-                "--exit-node-allow-lan-access=true"
-                "--operator=yiyu"
-                "--ssh"
-              ];
-            };
+            boot.kernelParams = [ "console=ttyS0,115200" ];
+            services.tailscale.enable = true;
             networking.hostName = "gha-qemu";
             users.users.yiyu = {
               isNormalUser = true;
@@ -38,6 +28,11 @@ jobs:
               hashedPassword = "$6$yM8t/1VCAl66Y7XD$dmvt7Xq6iGLU3uJ9lcpUvr/7PZxt7IzYsoZbm4s42pejndU4IAMW4YbP4JcQK5KxI5DzSwLjPFCYY/OETznnO1";
             };
             services.openssh.enable = true;
+            systemd.services.vm-ready = {
+              wantedBy = [ "multi-user.target" ];
+              serviceConfig.Type = "oneshot";
+              script = "echo VM-READY > /dev/console";
+            };
             environment.systemPackages = with pkgs; [
             ];
           }
@@ -75,24 +70,36 @@ jobs:
             --accept-flake-config | head -1)
           echo "image=$image" >> "$GITHUB_ENV"
 
-      - name: Boot NixOS and wait for SSH
+      - name: Boot NixOS and wait for VM-READY marker
         run: |
-          nix shell nixpkgs#qemu -c qemu-system-x86_64 \
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+          accel=(-accel tcg,thread=multi)
+          test -e /dev/kvm && accel=(-accel kvm -cpu host)
+          qemu-system-x86_64 \
+            "${accel[@]}" \
             -m 2048 \
-            -smp 2 \
+            -smp 4 \
             -drive file=${{ env.image }},if=virtio,format=qcow2 \
             -nic user,model=virtio,hostfwd=tcp::2222-:22 \
-            -display none -serial file:qemu.log > /dev/null 2>&1 &
+            -display none -serial file:qemu.log > qemu.out 2> qemu.err &
           qemu_pid=$!
           ok=no
-          for i in $(seq 1 120); do
-            if timeout 2 bash -c '</dev/tcp/127.0.0.1/2222' 2>/dev/null; then
+          for i in $(seq 1 200); do
+            if grep -q VM-READY qemu.log 2>/dev/null; then
               ok=yes
+              break
+            fi
+            if ! kill -0 "$qemu_pid" 2>/dev/null; then
+              echo "qemu exited early"
               break
             fi
             sleep 3
           done
           kill "$qemu_pid" 2>/dev/null || true
           wait "$qemu_pid" 2>/dev/null || true
-          tail -40 qemu.log
+          echo "=== qemu.err ==="
+          tail -40 qemu.err 2>/dev/null || true
+          echo "=== qemu.log ==="
+          tail -60 qemu.log 2>/dev/null || true
           test "$ok" = yes
