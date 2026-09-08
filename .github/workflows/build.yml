@@ -69,12 +69,10 @@ jobs:
         env:
           NIXOS_DISK_IMAGE_MEM: "4096"
         run: |
-          nix run nixpkgs#nixos-rebuild -- build-image \
+          image=$(nix run nixpkgs#nixos-rebuild -- build-image \
             --flake /tmp/nixos#gha-qemu \
             --image-variant qemu \
-            --accept-flake-config
-          image=$(find result -L -name '*.qcow2' | head -1)
-          test -n "$image"
+            --accept-flake-config | head -1)
           echo "image=$image" >> "$GITHUB_ENV"
 
       - name: Boot NixOS and wait for SSH
