@@ -20,6 +20,7 @@ jobs:
             virtualisation.diskSize = 10 * 1024;
             boot.growPartition = true;
             boot.kernelParams = [ "console=ttyS0,115200" ];
+            boot.initrd.availableKernelModules = [ "virtio_pci" "virtio_blk" "virtio_net" "9p" "9pnet_virtio" ];
             services.tailscale.enable = true;
             networking.hostName = "gha-qemu";
             users.users.yiyu = {
